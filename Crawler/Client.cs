@@ -11,19 +11,22 @@ namespace Crawler
     {
         private Socket _MainSocket = null;
         private string _Host = String.Empty;
-        private int _Port = 80;
+        private string _Port = "80";
+
+        public string Xml { get; set; }
+        public string Page { get; set; }
         public int DepthOfCrawling { get; set; }
-        public bool IsError { get; set; }
         public string HTMLResult { get; set; }
-        public Client(string host) : this(host, 80) { }
+        public Client(string host) : this(host, 3) { }
         public Client(string host, int depth)
         {
             if (String.IsNullOrEmpty(host)) throw new Exception("It's nessesary to add http-server.");
             if (depth <= 0) depth = 1;
             // --
             _Host = host;
-            _Port = 80;
+            _Port = "80";
             DepthOfCrawling = depth;
+            Page = "/";
             Connect();
         }
         /// <summary>
@@ -31,23 +34,26 @@ namespace Crawler
         /// </summary>
         public void Connect()
         {
+            Xml = "<? xml version = '1.0' encoding = 'utf‐8' ?>\r\n";
+            Xml += "<SITE url='http://" + _Host + "' depth='" + DepthOfCrawling.ToString() + "'>\r\n";
+
             IPHostEntry myIPHostEntry = Dns.GetHostEntry(_Host);
 
             if (myIPHostEntry == null || myIPHostEntry.AddressList == null || myIPHostEntry.AddressList.Length <= 0)
             {
                 throw new Exception("Can't connect to IP.");
             }
-            IPEndPoint myIPEndPoint = new IPEndPoint(myIPHostEntry.AddressList[0], _Port);
+            IPEndPoint myIPEndPoint = new IPEndPoint(myIPHostEntry.AddressList[0], int.Parse(_Port));
 
             _MainSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
             _MainSocket.ReceiveBufferSize = 512; 
             
             WriteToLog("Connect to server: {0}:{1}", _Host, _Port);
             _MainSocket.Connect(myIPEndPoint);
-            Command("GET /pb/ HTTP/1.1\r\nHost: "+_Host+":"+_Port.ToString()+"\r\nConnection: keep - alive\r\n\r\n");
+            Command("GET "+Page+" HTTP/1.1\r\nHost: "+_Host+":"+_Port.ToString()+"\r\nConnection: keep - alive\r\n\r\n");
             HTMLResult = ReadToEnd();
         }
-        #region Close()
+        #region Close(),Command(string)
 
 
         /// <summary>
@@ -60,7 +66,6 @@ namespace Crawler
             ReadToEnd();
             _MainSocket.Close();
         }
-        #endregion
         /// <summary>
         /// Sending command to server
         /// </summary>
@@ -75,24 +80,77 @@ namespace Crawler
                 throw new Exception("An error has occured");
             }
         }
+        #endregion
         public string CreateXML(int depth)
         {
-            string xml = "<? xml version = '1.0' encoding = 'utf‐8' ?>\r\n";
-            xml += "<SITE url='http://" + _Host  + "' depth='" + DepthOfCrawling.ToString() + "'>\r\n";
-            foreach (var item in ParseHTML("images"))
+            foreach (string item in ParseHTML("images"))
             {
-                xml += "<IMAGE>" + item + "</IMAGE>\r\n";
-            }
-            foreach (var item in ParseHTML("mails"))
+                string[] buff = item.Split('"');
+                for (int i = 0; i < buff.Length; i++)
+                {
+                    if (buff[i].Contains("src="))
+                    {
+                        Xml += "<IMAGE>" + buff[i+1] + "</IMAGE>\r\n";
+                    }
+                    
+                }
+            }//add images to xml
+            foreach (string item in ParseHTML("mails"))
             {
-                xml += "<EMAIL>" + item + "</EMAIL>\r\n";
-            }
-            foreach (var item in ParseHTML("links"))
+                Xml += "<EMAIL>" + item + "</EMAIL>\r\n";
+            }//have to add email
+            foreach (string item in ParseHTML("links"))
             {
-                xml += "<FILE " + item + "</FILE>\r\n";
+                Xml += "<FILE " + item + "</FILE>\r\n";
+                if (item.Contains("index"))
+                {
+                    string[] buff = item.Split('"');
+                    for (int i = 0; i < buff.Length; i++)
+                    {
+                        if (buff[i].Contains("/"))
+                        {
+                            int ind = buff[i].IndexOf("index.html");
+                            Page += buff[i].Substring(0,ind);
+                        }
+                    }
+                    Command("GET " + Page + " HTTP/1.1\r\nHost: " + _Host + ":" + _Port.ToString() + "\r\nConnection: keep - alive\r\n\r\n");
+                    Page = "/";
+                    if (depth > 0)
+                    {
+                        HTMLResult = ReadToEnd();
+                        CreateXML(depth - 1);
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+                else
+                {
+                    string[] buff = item.Split('"');
+                    for (int i = 0; i < buff.Length; i++)
+                    {
+                        if (buff[i].Contains("http"))
+                        {
+                            _Host = buff[i].Substring(buff[i].LastIndexOf("/")+1);                            
+                        }
+                    }
+                    Command("GET " + Page + " HTTP/1.1\r\nHost: " + _Host + ":" + _Port.ToString() + "\r\nConnection: keep - alive\r\n\r\n");
+                    _Host = "detox.wi.ps.pl";
+                    if (depth > 0)
+                    {
+                        HTMLResult = ReadToEnd();
+                        CreateXML(depth - 1);
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }//go to out pages. not work with extended references. made to limit outer crawling.
             }
-            return xml+="</SITE>";
+            return Xml;
         }
+        #region ReadToEnd()
         /// <summary>
         /// Read and take back all data from socket.
         /// </summary>
@@ -109,6 +167,7 @@ namespace Crawler
             WriteToLog("Answer: {0}",result.ToString());
             return result.ToString();
         }
+        #endregion
         /// <summary>
         /// Parse from html to list of links,images or mail addresses.
         /// </summary>
