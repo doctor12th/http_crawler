@@ -18,6 +18,7 @@ namespace Crawler
         public int DepthOfCrawling { get; set; }
         public string HTMLResult { get; set; }
         public Client(string host) : this(host, 3) { }
+        
         public Client(string host, int depth)
         {
             if (String.IsNullOrEmpty(host)) throw new Exception("It's nessesary to add http-server.");
